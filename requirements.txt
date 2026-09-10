@@ -1,0 +1,5 @@
+hyperliquid-python-sdk==0.10.1
+requests==2.32.3
+python-dotenv==1.0.1
+aiohttp==3.10.0
+websocket-client==1.8.0

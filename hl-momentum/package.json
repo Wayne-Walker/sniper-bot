@@ -1,0 +1,29 @@
+{
+  "name": "hl-momentum-bot",
+  "version": "1.0.0",
+  "description": "Hyperliquid new listing momentum bot",
+  "scripts": {
+    "dev":         "ts-node src/index.ts",
+    "paper":       "PAPER_TRADE=true ts-node src/index.ts",
+    "build":       "tsc",
+    "start":       "node dist/index.js",
+    "pm2:paper":   "pm2 start ecosystem.config.js --only hl-momentum-paper",
+    "pm2:live":    "pm2 start ecosystem.config.js --only hl-momentum-live",
+    "pm2:stop":    "pm2 stop all",
+    "pm2:logs":    "pm2 logs",
+    "pm2:status":  "pm2 status"
+  },
+  "dependencies": {
+    "axios":      "^1.7.0",
+    "dotenv":     "^16.4.0",
+    "ethers":     "^6.13.0",
+    "hyperliquid": "^1.5.5",
+    "ws":         "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/ws":   "^8.5.0",
+    "ts-node":     "^10.9.0",
+    "typescript":  "^5.5.0"
+  }
+}

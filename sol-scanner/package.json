@@ -1,0 +1,24 @@
+{
+  "name": "sol-scanner",
+  "version": "0.1.0",
+  "description": "Solana survivor scanner — alerts on new tokens that survived their first minutes. Alert-only, no trading.",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "ts-node src/index.ts",
+    "start": "node dist/index.js",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "pm2": "pm2 start ../ecosystem.config.js --only sol-scanner"
+  },
+  "dependencies": {
+    "axios": "^1.7.0",
+    "dotenv": "^16.4.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.5.0",
+    "ts-node": "^10.9.0",
+    "typescript": "^5.5.0"
+  }
+}

@@ -1,0 +1,37 @@
+# ── Secrets — never commit ─────────────────────────────────────────
+# (comments MUST be on their own line — trailing "# ..." becomes part of the pattern)
+.env
+# .env.local, .env.bak.*, and any other variant, at any depth
+.env.*
+# dev env files (root + sub-bots) hold real creds
+env.dev
+# keep a placeholder template if one is ever added
+!.env.example
+!.env.sample
+# env/config backups
+*.bak
+*firebase*sa*.json
+*service-account*.json
+*service_account*.json
+*-sa.json
+*.pem
+*.key
+
+# ── Python ─────────────────────────────────────────────────────────
+venv/
+# sub-bots use .venv (matched at any depth)
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# ── Node ───────────────────────────────────────────────────────────
+node_modules/
+
+# ── Runtime artifacts ──────────────────────────────────────────────
+logs/
+reports/
+*.log
+.DS_Store
+# sub-bot runtime output (signal snapshots, not source)
+hl-smartmoney/signals/

@@ -1,0 +1,132 @@
+The Stack
+hl-smartmoney  →  finds the edge
+hl-wallet-tracker  →  validates the edge
+hl-momentum  →  executes the trade
+
+Step 1 — Morning Routine (5 mins)
+Run the smart money scan first thing:
+bashpython main.py edge
+This gives you today's high-conviction coins where smart money and dumb money are on opposite sides with a gap >50%. These are your watchlist for the day.
+🟢 $SOL   LONG   gap=72%   mark=$142.50   STRONGLY BULLISH
+🔴 $HYPE  SHORT  gap=61%   mark=$28.40    MODERATELY BEARISH
+
+Step 2 — Validate with Wallet Tracker
+For each signal, check what the actual smart money wallets have been doing historically:
+bashpython main.py wallet 0x<top_winner_address>
+You're looking for:
+
+Win rate >60% on that specific coin
+Profit factor >2 — they make more than they lose
+Avg duration — are they swing trading (days) or scalping (minutes)?
+Entry clustering — where did they enter last time?
+
+If the wallet tracker confirms the wallet has a strong track record on that coin, the signal is validated. If the wallet has never traded that coin or has a poor win rate on it, skip it.
+
+Step 3 — Set Your Entry
+From the coin report you know:
+
+Smart money avg entry price
+Where their entries clustered
+
+Smart Money entry concentration:
+▲ LONG   $136.25  ████████  62%  5 wallets  $3,010,000
+▲ LONG   $141.80  ████░░░░  28%  2 wallets  $1,390,000
+This tells you $136 was the main accumulation zone. If price is near $142 now, smart money is already up. You either:
+
+Wait for a pullback to $136–138 (better entry, lower risk)
+Enter now accepting you're later than smart money
+
+
+Step 4 — Size the Trade
+Based on the leverage data:
+Smart money avg leverage: 3.2x
+Dumb money avg leverage:  8.5x
+Smart money uses low leverage. Match them — don't use 10x because dumb money does. If smart money is using 3x, use 2–3x max. High leverage is how the losers lose.
+
+Step 5 — Set Your Exits
+From the wallet tracker's historical trade stats:
+Avg duration:  6.2h
+Win rate:      68%
+Best trades:   closed between 4–8 hours
+Use that as your time stop. If the trade isn't working in 8 hours, exit. Smart money doesn't hold losers — neither should you.
+Set your take profit at the wallet tracker's avg ROI:
+Avg ROI/trade: +4.82%
+So if you enter at $142.50, take profit at ~$149. Stop loss at -1.5% to -2%.
+
+Step 6 — Monitor for Liquidation Cascades
+The liquidation monitor runs 24/7 in the background. When dumb money gets liquidated at scale it often triggers a price spike in the smart money direction. This is a secondary entry signal — if you missed the initial entry and get a liquidation alert on the short side, that's the market clearing the losers and smart money's trade accelerating.
+
+The Full Daily Flow
+08:00  Run edge scan          → get today's watchlist
+08:10  Check wallet tracker   → validate each signal
+08:20  Identify entry zone    → use cluster data
+09:00  Enter trade            → match smart money leverage
+       Monitor liquidation alerts throughout day
+17:00  Review open positions  → exit if time stop hit
+
+What Gives You the Real Edge
+The honest edge here is behavioural, not technical:
+What losers doWhat smart money doesHigh leverage (8–10x)Low leverage (2–3x)Chase price after moveEnter at accumulation zonesHold losers hoping for reversalCut losses quicklyTrade every coinFocus on 3–5 coins they knowIgnore funding ratesTime entries around funding
+The wallet tracker shows you the exact patterns of wallets that have made millions. The smartest use of these tools is not to automate everything — it's to copy their behaviour, not just their positions.
+
+One Important Caveat
+These tools give you an informational edge — they don't guarantee profits. Even the top wallets have a 30–40% loss rate on individual trades. The edge comes from having a positive expectancy over many trades, not from any single trade being certain. Start small, validate the signals over 20–30 trades before sizing up.
+
+*******************************************
+08:00 — Run edge scan
+bashcd hl-smartmoney
+python main.py edge
+Shows all coins where smart/dumb gap > 50%. Saves to signals/latest.txt.
+
+08:10 — Check wallet tracker for each signal
+bashcd hl-wallet-tracker
+python main.py all
+Or if you only want to check specific coins from the edge scan:
+bashpython main.py coin SOL
+python main.py coin BTC
+
+08:20 — Identify entry zone (cluster data)
+bashcd hl-smartmoney
+python main.py coin SOL
+This gives you the full breakdown — entry price clusters, smart money avg entry, long/short % bars. Saves to reports/report_coin_SOL_*.txt.
+
+08:20 — Gate check before entering
+bashpython main.py check SOL long
+python main.py check BTC short
+Returns ✅ ALLOWED or 🚫 BLOCKED with the reason.
+
+09:00 — Enter trade
+This is manual on Hyperliquid app or via the momentum bot if running:
+bashcd hl-momentum
+python main.py
+The momentum bot will auto-enter if a new listing fires and edge confirms it.
+
+Throughout the day — liquidation monitor
+Runs automatically in the background when you start either:
+bashcd hl-smartmoney
+python main.py
+Telegram alerts fire automatically. No command needed — just keep it running.
+
+17:00 — Review open positions
+bashcd hl-wallet-tracker
+python main.py all
+Scroll to the ⚡ CURRENTLY OPEN POSITIONS section for each tracked wallet. Or check a specific wallet:
+bashpython main.py wallet 0xYOUR_WALLET
+
+
+Yes. PM2's cron_restart: "0 8 * * *" triggers the morning briefing every day at 8:00 AM local time.
+
+Two things to make sure it survives:
+
+Your Mac needs to be awake at 8 AM — PM2 runs as a user process, so if the lid is closed or the machine is sleeping, it won't fire. If that's a concern, you can adjust the cron time or set macOS to auto-wake (System Settings > Energy).
+
+PM2 needs to survive reboots — run this once:
+
+
+sudo env PATH=$PATH:/Users/ww/.nvm/versions/node/v24.14.0/bin /Users/ww/.nvm/versions/node/v24.14.0/lib/node_modules/pm2/bin/pm2 startup launchd -u ww --hp /Users/ww
+After that, every time your Mac boots, PM2 auto-starts with all three processes (momentum bot, liquidation monitor, morning briefing cron).
+
+You can also trigger it manually anytime with:
+
+
+pm2 restart morning-briefing
