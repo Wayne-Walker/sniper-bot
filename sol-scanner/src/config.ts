@@ -4,12 +4,6 @@ import path from "path";
 // .env lives at the repo root, shared with the Python bots
 dotenv.config({ path: path.resolve(__dirname, "../../.env") });
 
-function requireEnv(key: string): string {
-  const val = process.env[key];
-  if (!val) throw new Error(`Missing required env var: ${key}`);
-  return val;
-}
-
 function num(key: string, fallback: number): number {
   const raw = process.env[key];
   if (raw === undefined || raw.trim() === "") return fallback;
@@ -19,30 +13,41 @@ function num(key: string, fallback: number): number {
 }
 
 export const config = {
-  helius: {
-    rpcUrl: requireEnv("HELIUS_RPC_URL"),
-    wsUrl:  requireEnv("HELIUS_WS_URL"),
+  // Jupiter's free public mirror: no API key, 60 req/min. We poll once a
+  // minute, so we sit at ~1/60th of the allowance.
+  //
+  // This replaced a Helius websocket feed that cost ~137,000 credits/hour —
+  // it burned a 1,000,000-credit monthly quota in 7 hours. logsSubscribe
+  // delivers EVERY transaction mentioning pump.fun/Raydium and we discarded
+  // 99.9% of it; staying online that way needed the $499/mo plan. A survivor
+  // scanner never needed a live stream: it needs tokens that already survived,
+  // which is one ranked query.
+  jupiter: {
+    baseUrl:      process.env.JUP_BASE_URL ?? "https://lite-api.jup.ag",
+    window:       process.env.JUP_WINDOW   ?? "1h",   // ranking window
+    limit:        num("JUP_LIMIT", 100),
+    pollSeconds:  num("SCAN_POLL_SECONDS", 60),
   },
 
-  // How long a token must SURVIVE before it is even scored. This is the whole
-  // point of the scanner: we are not racing to be first, we are waiting to see
-  // which pools are still standing. Nothing is alerted before this.
-  maturity: {
-    minutes:        num("SCAN_MATURITY_MINUTES", 15),
-    recheckSeconds: num("SCAN_RECHECK_SECONDS", 60),
-    maxPending:     num("SCAN_MAX_PENDING", 5000),
+  // The survival window. Tokens younger than minAgeMinutes haven't proven
+  // anything yet; older than maxAgeMinutes and we're not early any more.
+  age: {
+    minMinutes: num("SCAN_MIN_AGE_MINUTES", 15),
+    maxMinutes: num("SCAN_MAX_AGE_MINUTES", 180),
   },
 
-  // Gates applied at maturity. Deliberately strict — a scanner that alerts on
-  // everything is noise, and noise is what makes an alert channel worthless.
   gates: {
-    maxRiskScore:        num("SCAN_MAX_RISK_SCORE", 20),   // RugCheck: LOW = SAFE
-    minLpLockedPct:      num("SCAN_MIN_LP_LOCKED_PCT", 50),
-    minLiquidityUsd:     num("SCAN_MIN_LIQUIDITY_USD", 15000),
-    maxTopHolderPct:     num("SCAN_MAX_TOP_HOLDER_PCT", 15),
-    maxTop10HolderPct:   num("SCAN_MAX_TOP10_HOLDER_PCT", 40),
-    minHolders:          num("SCAN_MIN_HOLDERS", 75),
-    maxInsiderPct:       num("SCAN_MAX_INSIDER_PCT", 10),
+    minLiquidityUsd:   num("SCAN_MIN_LIQUIDITY_USD", 15000),
+    minHolders:        num("SCAN_MIN_HOLDERS", 75),
+    maxTopHoldersPct:  num("SCAN_MAX_TOP_HOLDERS_PCT", 25),
+    minOrganicScore:   num("SCAN_MIN_ORGANIC_SCORE", 40),
+    // stats1h.liquidityChange — a large negative number is LP being pulled.
+    minLiquidityChange: num("SCAN_MIN_LIQ_CHANGE_PCT", -25),
+    // audit.devMints — how many tokens this deployer has ever minted.
+    // Thousands means a serial launcher, not a project.
+    maxDevMints:       num("SCAN_MAX_DEV_MINTS", 50),
+    // Optional second opinion on LP lock (RugCheck summary, ~135 bytes).
+    minLpLockedPct:    num("SCAN_MIN_LP_LOCKED_PCT", 0),
   },
 
   telegram: {
@@ -50,12 +55,10 @@ export const config = {
     chatId:   process.env.TELEGRAM_CHAT_ID   ?? "",
   },
 
-  // Alerts are suppressed unless explicitly enabled, so a fresh deploy observes
-  // quietly and journals before it ever pings the phone.
+  // Alerts stay off until the journal shows the signal is worth trusting.
   alertsEnabled: (process.env.SCAN_ALERTS_ENABLED ?? "false") === "true",
 
   paths: {
-    // Follows discovery_scan.py's convention: runtime state under reports/
     state:   path.resolve(__dirname, "../../reports/sol_scanner_state.json"),
     journal: path.resolve(__dirname, "../../reports/sol_scanner_journal.jsonl"),
   },

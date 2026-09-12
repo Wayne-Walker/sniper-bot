@@ -46,15 +46,22 @@ DAYS     = float(os.getenv("SOL_REVIEW_DAYS", "7"))
 
 # Gate label ← substring of the reason string emitted by token.scorer.ts
 GATES = [
-    ("risk score",       "risk score"),
-    ("LP locked",        "LP locked"),
     ("liquidity",        "liquidity $"),
+    ("LP draining",      "draining"),
     ("holder count",     "holders <"),
-    ("top holder",       "top holder"),
-    ("top-10 concentr.", "top 10 hold"),
-    ("insiders",         "insiders hold"),
+    ("top holders",      "top holders"),
+    ("organic score",    "organic score"),
+    ("serial dev",       "dev has minted"),
+    ("too young",        "too young"),
+    ("too old",          "too old"),
     ("mint authority",   "mint authority"),
     ("freeze authority", "freeze authority"),
+    ("LP locked",        "LP locked"),
+    # legacy labels — Helius/RugCheck era, kept so the archived journal
+    # (reports/sol_scanner_journal.helius.jsonl) still reads correctly
+    ("risk score",       "risk score"),
+    ("top-10 concentr.", "top 10 hold"),
+    ("insiders",         "insiders hold"),
     ("rugged flag",      "flagged as RUGGED"),
 ]
 
@@ -192,13 +199,13 @@ def build(entries: list[dict], days: float) -> tuple[str, str]:
         f"Venues: {dict(venues)}\n"
         f"Gate kills: {dict(gate_hits)}\n"
         f"Near-misses (failed one gate only): {dict(near_by_gate)}\n"
-        f"Current thresholds: risk<={os.getenv('SCAN_MAX_RISK_SCORE','20')}, "
-        f"LPlocked>={os.getenv('SCAN_MIN_LP_LOCKED_PCT','50')}%, "
+        f"Current thresholds: age {os.getenv('SCAN_MIN_AGE_MINUTES','15')}-{os.getenv('SCAN_MAX_AGE_MINUTES','180')}m, "
         f"liq>=${os.getenv('SCAN_MIN_LIQUIDITY_USD','15000')}, "
-        f"topHolder<={os.getenv('SCAN_MAX_TOP_HOLDER_PCT','15')}%, "
-        f"top10<={os.getenv('SCAN_MAX_TOP10_HOLDER_PCT','40')}%, "
         f"holders>={os.getenv('SCAN_MIN_HOLDERS','75')}, "
-        f"insiders<={os.getenv('SCAN_MAX_INSIDER_PCT','10')}%\n"
+        f"topHolders<={os.getenv('SCAN_MAX_TOP_HOLDERS_PCT','25')}%, "
+        f"organicScore>={os.getenv('SCAN_MIN_ORGANIC_SCORE','40')}, "
+        f"liqChange1h>={os.getenv('SCAN_MIN_LIQ_CHANGE_PCT','-25')}%, "
+        f"devMints<={os.getenv('SCAN_MAX_DEV_MINTS','50')}\n"
     )
     return stats, prompt
 

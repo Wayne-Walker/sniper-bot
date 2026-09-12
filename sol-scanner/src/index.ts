@@ -1,97 +1,110 @@
+import fs from "fs";
+import path from "path";
 import { config } from "./config";
 import { log } from "./utils/logger";
-import { PoolListener, NewPoolEvent } from "./listener/pool.listener";
+import { JupiterFeed, JupToken, ageMinutes } from "./feed/jupiter.feed";
 import { TokenScorer } from "./scorer/token.scorer";
-import { Watchlist } from "./watchlist/watchlist";
 import { record } from "./journal/journal";
 import { sendAlert } from "./utils/telegram";
 
-const listener  = new PoolListener();
-const scorer    = new TokenScorer();
-const watchlist = new Watchlist();
+const feed   = new JupiterFeed();
+const scorer = new TokenScorer();
 
-let sweeping = false;
-let sweepTimer: NodeJS.Timeout | null = null;
-let saveTimer:  NodeJS.Timeout | null = null;
+// Mints we have already ruled on, so a token sitting in the ranked feed for an
+// hour is journaled and alerted exactly once.
+const seen = new Set<string>();
 
-// ── Detect ───────────────────────────────────────────────────────────────────
-// Detection does not trade and does not alert. It only enqueues.
-async function onNewPool(e: NewPoolEvent): Promise<void> {
-  if (watchlist.add(e.tokenMint, e.source, e.signature)) {
-    log.info(`Queued [${e.source}] ${e.tokenMint.slice(0, 8)}... — scoring in ${config.maturity.minutes}m`);
-  }
-}
+let polling = false;
+let pollTimer: NodeJS.Timeout | null = null;
+let saveTimer: NodeJS.Timeout | null = null;
 
-// ── Sweep ────────────────────────────────────────────────────────────────────
-// Runs every recheckSeconds. Scores everything that has survived the maturity
-// window. Serial, with a guard, so we never stampede RugCheck's rate limit.
-async function sweep(): Promise<void> {
-  if (sweeping) return;
-  sweeping = true;
+// ── Poll ─────────────────────────────────────────────────────────────────────
+async function poll(): Promise<void> {
+  if (polling) return;
+  polling = true;
   try {
-    const due = watchlist.due();
-    if (due.length) log.info(`Sweep — ${due.length} matured candidate(s)`);
+    const tokens = await feed.fetchCandidates();
+    if (!tokens.length) return;
 
-    for (const p of due) {
-      const result = await scorer.score(p.mint);
+    // Age-filter first: it costs nothing and removes the established tokens
+    // that dominate a score-ranked feed.
+    const inWindow = tokens.filter((t: JupToken) => {
+      const a = ageMinutes(t);
+      return a >= config.age.minMinutes && a <= config.age.maxMinutes;
+    });
 
-      if (result.status === "rate_limited") {
-        // Do NOT resolve — retry on the next sweep. Treating a rate limit as a
-        // rejection is how the old scorer silently rejected everything.
-        log.warn(`Rate limited on ${p.mint.slice(0, 8)}... — will retry`);
-        watchlist.defer(p.mint);
-        break;   // back off entirely for this sweep
-      }
+    const fresh = inWindow.filter((t) => !seen.has(t.id));
+    log.info(`Poll — ${tokens.length} ranked · ${inWindow.length} in age window · ${fresh.length} new`);
 
-      record(p, result);
-      watchlist.resolve(p.mint);
+    for (const t of fresh) {
+      seen.add(t.id);
+      const result = await scorer.score(t);
+      record(t.id, result);
 
-      const sym = result.metrics.symbol ?? "?";
       if (result.status === "pass") {
-        log.success(`PASS ${sym} ${p.mint.slice(0, 8)}...`);
-        await alert(p.mint, sym, p.source, result);
+        log.success(`PASS $${result.metrics.symbol} ${t.id.slice(0, 8)}...`);
+        await alert(t.id, result);
       } else {
-        log.info(`fail ${sym} ${p.mint.slice(0, 8)}... — ${result.reasons[0]}`);
+        log.info(`fail $${result.metrics.symbol} — ${result.reasons[0]}`);
       }
-
-      // Gentle pacing between full-report calls.
-      await new Promise((r) => setTimeout(r, 1200));
     }
   } catch (err) {
-    log.error(`Sweep error: ${err}`);
+    log.error(`Poll error: ${err}`);
   } finally {
-    sweeping = false;
+    polling = false;
   }
 }
 
 // ── Alert ────────────────────────────────────────────────────────────────────
-async function alert(mint: string, symbol: string, source: string, r: any): Promise<void> {
+async function alert(mint: string, r: { metrics: any }): Promise<void> {
   const m = r.metrics;
-  const ageM = config.maturity.minutes;
   const body = [
-    `🔎 *Solana survivor* — $${symbol}`,
+    `🔎 *Solana survivor* — $${m.symbol}`,
     "",
     `\`${mint}\``,
     "",
-    `venue      ${source}`,
-    `survived   ${ageM}m`,
-    `risk score ${m.riskScore} (lower = safer)`,
-    `liquidity  $${Math.round(m.liquidityUsd ?? 0).toLocaleString()}`,
-    `LP locked  ${(m.lpLockedPct ?? 0).toFixed(1)}%`,
+    `age        ${m.ageMin.toFixed(0)}m on ${m.launchpad}`,
+    `liquidity  $${Math.round(m.liquidityUsd).toLocaleString()}  (${m.liqChange1h >= 0 ? "+" : ""}${m.liqChange1h.toFixed(0)}% 1h)`,
     `holders    ${m.holders}`,
-    `top holder ${(m.topHolderPct ?? 0).toFixed(1)}%  |  top10 ${(m.top10Pct ?? 0).toFixed(1)}%`,
-    `insiders   ${(m.insiderPct ?? 0).toFixed(1)}%`,
+    `organic    ${m.organicScore.toFixed(0)} (${m.organicLabel})  ·  ${(m.organicRatio * 100).toFixed(1)}% of buy vol`,
+    `top hldrs  ${m.topHoldersPct.toFixed(1)}%`,
+    `dev mints  ${m.devMints}`,
+    m.lpLockedPct !== null ? `LP locked  ${m.lpLockedPct.toFixed(1)}%` : "",
     "",
     `https://dexscreener.com/solana/${mint}`,
     "",
     `_Scanner output — not a trade signal. Verify before acting._`,
-  ].join("\n");
+  ].filter(Boolean).join("\n");
 
   if (!config.alertsEnabled) {
-    log.warn(`[alerts off] would have alerted $${symbol} — journaled only`);
+    log.warn(`[alerts off] would have alerted $${m.symbol} — journaled only`);
     return;
   }
   await sendAlert(body);
+}
+
+// ── Seen-set persistence (so a restart doesn't re-alert) ────────────────────
+function save(): void {
+  try {
+    fs.mkdirSync(path.dirname(config.paths.state), { recursive: true });
+    fs.writeFileSync(config.paths.state, JSON.stringify({
+      seen:    [...seen].slice(-20_000),
+      savedAt: Date.now(),
+    }, null, 2));
+  } catch (err) {
+    log.warn(`Could not save state: ${err}`);
+  }
+}
+
+function load(): void {
+  try {
+    if (!fs.existsSync(config.paths.state)) return;
+    const d = JSON.parse(fs.readFileSync(config.paths.state, "utf8"));
+    for (const m of d.seen ?? []) seen.add(m);
+    log.info(`State restored — ${seen.size} mints already ruled on`);
+  } catch (err) {
+    log.warn(`Could not load state: ${err}`);
+  }
 }
 
 // ── Bootstrap ────────────────────────────────────────────────────────────────
@@ -100,31 +113,27 @@ async function main(): Promise<void> {
   console.log(  "║   Solana Survivor Scanner — alert only   ║");
   console.log(  "╚══════════════════════════════════════════╝\n");
 
-  log.info(`Maturity window : ${config.maturity.minutes}m`);
-  log.info(`Sweep interval  : ${config.maturity.recheckSeconds}s`);
-  log.info(`Alerts          : ${config.alertsEnabled ? "ENABLED" : "OFF (journal only)"}`);
-  log.info(`Journal         : ${config.paths.journal}`);
-  const s = watchlist.stats();
-  log.info(`Watchlist       : ${s.pending} pending, ${s.seen} seen`);
+  load();
+  log.info(`Source     : Jupiter ${config.jupiter.window} organic-score top ${config.jupiter.limit} (free, no key)`);
+  log.info(`Age window : ${config.age.minMinutes}–${config.age.maxMinutes} min`);
+  log.info(`Poll       : every ${config.jupiter.pollSeconds}s (~${(60 / config.jupiter.pollSeconds).toFixed(1)} req/min of a 60/min allowance)`);
+  log.info(`Alerts     : ${config.alertsEnabled ? "ENABLED" : "OFF (journal only)"}`);
+  log.info(`Journal    : ${config.paths.journal}`);
 
-  listener.onNewPool(onNewPool);
-  listener.start();
+  await poll();
+  pollTimer = setInterval(() => void poll(), config.jupiter.pollSeconds * 1000);
+  saveTimer = setInterval(save, 60_000);
 
-  sweepTimer = setInterval(() => void sweep(), config.maturity.recheckSeconds * 1000);
-  saveTimer  = setInterval(() => watchlist.save(), 60_000);
-
-  log.success("Scanner running — watching for new pools.\n");
-
+  log.success("Scanner running.\n");
   process.on("SIGINT",  shutdown);
   process.on("SIGTERM", shutdown);
 }
 
 function shutdown(): void {
   log.warn("Shutting down...");
-  if (sweepTimer) clearInterval(sweepTimer);
-  if (saveTimer)  clearInterval(saveTimer);
-  listener.stop();
-  watchlist.save();
+  if (pollTimer) clearInterval(pollTimer);
+  if (saveTimer) clearInterval(saveTimer);
+  save();
   process.exit(0);
 }
 
