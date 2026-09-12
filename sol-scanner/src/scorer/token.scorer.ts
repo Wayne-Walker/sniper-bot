@@ -2,6 +2,7 @@ import axios from "axios";
 import { config } from "../config";
 import { log } from "../utils/logger";
 import { JupToken, ageMinutes } from "../feed/jupiter.feed";
+import { deceptiveSymbol, safeSymbol } from "../utils/symbol";
 
 export type ScoreStatus = "pass" | "fail";
 
@@ -45,7 +46,7 @@ export class TokenScorer {
     const s1 = t.stats1h ?? {};
     const buyVol = pct(s1.buyVolume);
     const m: Metrics = {
-      symbol:        t.symbol ?? "?",
+      symbol:        safeSymbol(t.symbol),
       ageMin:        ageMinutes(t),
       liquidityUsd:  pct(t.liquidity),
       holders:       pct(t.holderCount),
@@ -64,6 +65,11 @@ export class TokenScorer {
 
     const r: string[] = [];
     const g = config.gates;
+
+    // ── Hard fail: a name that renders as nothing, or as something other
+    //    than what it contains, is a deception rather than branding ─────────
+    const nameIssue = deceptiveSymbol(t.symbol);
+    if (nameIssue) r.push(nameIssue);
 
     // ── Hard fails — authority still held means the supply isn't safe ───────
     if (a.mintAuthorityDisabled !== true)
