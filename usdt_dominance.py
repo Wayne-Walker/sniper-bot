@@ -29,6 +29,7 @@ Fail-safe: any fetch failure leaves the last good series in place.
 Usage:
   python usdt_dominance.py            # hourly: fetch, backfill if empty, alert, publish
   python usdt_dominance.py --show     # print the current read (no alert)
+  python usdt_dominance.py --brief    # plain-text read + levels + 7d/30d change (/usdtd)
 """
 
 import json
@@ -245,6 +246,42 @@ def _series_floats(data: dict) -> list:
     return [p["usdt_d"] for p in data.get("points", [])]
 
 
+def format_brief(data: dict) -> str:
+    """Plain-text read for the multi-bot `/usdtd` Telegram command. No Markdown —
+    that reply path sends without a parse mode, so `*`/`_` would show literally.
+    Local cache only (no network), so it answers instantly."""
+    pts = data.get("points", [])
+    s = [p["usdt_d"] for p in pts]
+    if len(s) < 12:
+        return "USDT.D history not built yet — run `python usdt_dominance.py`."
+    sig = usdtd_signal(s)
+    lines = [
+        f"{sig['emoji']} USDT.D {sig['usdt_d']}% — {sig['state']} ({sig['trend']})",
+        f"→ {sig['crypto']}",
+    ]
+    lv = []
+    if sig["support"]:
+        lv.append(f"support {sig['support']}%")
+    if sig["resistance"]:
+        lv.append(f"resistance {sig['resistance']}%")
+    if lv:
+        lines.append(f"Levels: {' / '.join(lv)}")
+    ch = []
+    if len(s) > 7:
+        ch.append(f"7d {s[-1] - s[-8]:+.2f}pp")
+    if len(s) > 30:
+        ch.append(f"30d {s[-1] - s[-31]:+.2f}pp")
+    if ch:
+        lines.append(f"Change: {' · '.join(ch)}")
+    lines += [
+        "",
+        "USDT.D is INVERSE to crypto: losing support / rejecting resistance = risk-on;",
+        "bouncing support / breaking resistance = risk-off.",
+        f"As of {pts[-1].get('date', '?')} (updated hourly).",
+    ]
+    return "\n".join(lines)
+
+
 def main() -> None:
     print("\n" + "=" * 64)
     print("  USDT DOMINANCE —", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
@@ -303,5 +340,7 @@ if __name__ == "__main__":
         s = _series_floats(d)
         print(format_line(usdtd_signal(s)) if len(s) >= 12
               else "USDT.D history not built yet — run `python usdt_dominance.py`.")
+    elif len(sys.argv) > 1 and sys.argv[1] == "--brief":
+        print(format_brief(_load()))
     else:
         main()

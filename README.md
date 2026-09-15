@@ -169,6 +169,60 @@ Liq Price : $138.2400
 Wallet    : 0x4f8a3b2c...
 ```
 
+### USDT Dominance (`usdt_dominance.py`)
+
+Tracks USDT.D (USDT market cap ÷ total crypto market cap), the risk-on/off rotation gauge. It moves **inversely** to crypto: USDT.D losing support or rejecting resistance = money leaving stables into coins (🟢 rally window); USDT.D bouncing off support or breaking resistance = flight to safety (🔴 crypto bearish).
+
+- Runs hourly via the `usdt-dominance` pm2 job; stores one point per day in `reports/usdt_dominance.json` and publishes `intelligence/usdt_dominance` to Firebase.
+- Pushes to the private Telegram chat **only** when USDT.D is at a key level (break or test/reject of support/resistance). Slow drift is stored but silent.
+
+**Check it on demand**
+
+| Where | Command | Output |
+|---|---|---|
+| Telegram (admin chat) | `/usdtd` (alias `/usdt`) | Level, S/R state, crypto implication, support/resistance, 7d/30d change. Instant, no AI call. |
+| Telegram (admin chat) | `/market` | Full market regime read. USDT.D is one input, alongside breadth, BTC structure and macro. Takes ~40s. |
+| Terminal | `python usdt_dominance.py --brief` | Same text as `/usdtd` |
+| Terminal | `python usdt_dominance.py --show` | One-line read |
+
+```
+🔴 USDT.D 6.92% — bouncing off support (rising)
+→ risk-off building — crypto bearish
+Levels: support 6.91% / resistance 7.92%
+Change: 7d +0.10pp · 30d -1.31pp
+```
+
+The Telegram commands are served by the multi-bot (`src/notifications/telegram-commands.ts`) and need `REVIEW_ADMIN_CHAT_ID`, `SNIPER_PYTHON` and `SNIPER_SCRIPT` set in its `.env`.
+
+### TRAMA Board (`exhaustion_watch.py --review-trama`)
+
+Lists which coins are in a **confirmed** trend against their TRAMA (Trend Regularity Adaptive Moving Average, length 50):
+
+- 🟢 **Above TRAMA, rising:** price is above the line and the line is sloping up.
+- 🔴 **Below TRAMA, falling:** price is below the line and the line is sloping down.
+- ➡️ **Ranging / unconfirmed:** everything else, such as a flat TRAMA, or price above a falling line.
+
+"Sloping" means the TRAMA moved more than 0.5% over the last 10 bars. Each coin shows how far price is from its TRAMA (%) and the slope, sorted strongest first. It covers the `EXHAUSTION_COINS` list plus BTC/ETH/SOL. Candles only, no AI call, about 5 seconds.
+
+| Where | Command |
+|---|---|
+| Telegram (admin chat) | `/review trama` (daily) · `/review trama 4H` · alias `/trama` |
+| Terminal | `python exhaustion_watch.py --review-trama [1D\|4H]` |
+
+```
+🟢 ABOVE TRAMA, RISING (39)
+ZEC       +77.1%  slope +25.9%
+AR        +41.6%  slope +4.4%
+...
+🔴 BELOW TRAMA, FALLING (7)
+BANK      -53.4%  slope -2.9%
+...
+➡️ RANGING / UNCONFIRMED (24)
+ADA, APE, API3, APT, AVAX, ...
+```
+
+Telegram has a 60-second cooldown between runs.
+
 ---
 
 ## PM2 Process Management

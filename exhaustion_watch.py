@@ -1786,11 +1786,15 @@ def review_coin_cli(coin_raw: str) -> tuple:
 
 
 # ── Daily-timeframe review (swing structure — /review <coin> daily) ───────
-def _daily_ohlcv(coin: str, days: int = 250) -> tuple:
-    """Daily closes/highs/lows/vols from Binance perp, else HL. (data, venue)."""
+_BAR_MS = {"1d": 86_400_000, "4h": 14_400_000}
+
+
+def _daily_ohlcv(coin: str, days: int = 250, interval: str = "1d") -> tuple:
+    """Closes/highs/lows/vols from Binance perp, else HL. (data, venue). `days` is a
+    bar count — daily by default; `interval="4h"` gives the last `days` 4h bars."""
     try:
         r = requests.get(BINANCE.FAPI + "/fapi/v1/klines",
-                         params={"symbol": coin + "USDT", "interval": "1d",
+                         params={"symbol": coin + "USDT", "interval": interval,
                                  "limit": min(1500, days)}, timeout=15)
         if r.status_code == 200 and r.json():
             k = r.json()
@@ -1801,8 +1805,8 @@ def _daily_ohlcv(coin: str, days: int = 250) -> tuple:
     try:
         now = int(time.time() * 1000)
         raw = _post({"type": "candleSnapshot",
-                     "req": {"coin": coin, "interval": "1d",
-                             "startTime": now - days * 86_400_000, "endTime": now}})
+                     "req": {"coin": coin, "interval": interval,
+                             "startTime": now - days * _BAR_MS[interval], "endTime": now}})
         if raw:
             return ([float(x["c"]) for x in raw], [float(x["h"]) for x in raw],
                     [float(x["l"]) for x in raw], [float(x["v"]) for x in raw]), "HL"
@@ -2119,6 +2123,62 @@ def market_breadth(coins: list) -> dict:
         "leaders": sorted(rows, key=lambda r: -r["chg7"])[:6],
         "laggards": sorted(rows, key=lambda r: r["chg7"])[:4],
     }
+
+
+# ── TRAMA board (--review-trama [1D|4H]) ────────────────────────────────────
+# Which coins are in a CONFIRMED trend against their TRAMA: price on one side AND
+# the TRAMA sloping the same way (trama_trend's up/down). Everything else — price
+# across a flat TRAMA, or price and slope disagreeing — is "ranging". Candles only,
+# no model call, so it answers in seconds. Uses the live (unclosed) bar's price.
+TRAMA_BOARD_TFS = {"1D": "1d", "4H": "4h"}
+TRAMA_BOARD_BARS = 250     # warm-up: the adaptive series is seeded from the first close
+
+
+def _trama_one(coin: str, interval: str) -> dict | None:
+    try:
+        ohlcv, _ = _daily_ohlcv(coin, days=TRAMA_BOARD_BARS, interval=interval)
+    except Exception:
+        return None
+    if not ohlcv:
+        return None
+    closes, highs, lows, _ = ohlcv
+    price = closes[-1]
+    val, slope, trend = trama_trend(price, trama(closes, highs, lows, length=TRAMA_LEN_D))
+    if val is None:
+        return None
+    return {"coin": coin, "trend": trend, "slope": slope,
+            "dist": (price / val - 1) * 100}
+
+
+def trama_board_cli(tf_raw: str = "") -> tuple:
+    """(exit_code, message) — plain text (the Telegram reply path has no parse mode)."""
+    tf = (tf_raw or "1D").upper()
+    if tf not in TRAMA_BOARD_TFS:
+        return 2, f"Usage: /review trama [{'|'.join(TRAMA_BOARD_TFS)}]"
+    coins = sorted({*DEFAULT_COINS, *MARKET_MAJORS})
+    with ThreadPoolExecutor(max_workers=MARKET_WORKERS) as pool:
+        rows = [r for r in pool.map(lambda c: _trama_one(c, TRAMA_BOARD_TFS[tf]), coins) if r]
+    if not rows:
+        return 4, "⚠️ Couldn't load candles for a TRAMA read — try again shortly."
+
+    up = sorted((r for r in rows if r["trend"] == "up"), key=lambda r: -r["dist"])
+    down = sorted((r for r in rows if r["trend"] == "down"), key=lambda r: r["dist"])
+    flat = sorted(r["coin"] for r in rows if r["trend"] == "flat")
+
+    def line(r):
+        return f"{r['coin']:<8} {r['dist']:+6.1f}%  slope {r['slope']:+.1f}%"
+
+    out = [f"📐 TRAMA board — {tf} (length {TRAMA_LEN_D}) · {len(rows)} coins",
+           f"Confirmed = price on that side of TRAMA and TRAMA sloping the same way "
+           f"(>{TRAMA_FLAT_PCT}% over {TRAMA_SLOPE_K} bars). % = price vs TRAMA.",
+           "", f"🟢 ABOVE TRAMA, RISING ({len(up)})"]
+    out += [line(r) for r in up] or ["none"]
+    out += ["", f"🔴 BELOW TRAMA, FALLING ({len(down)})"]
+    out += [line(r) for r in down] or ["none"]
+    out += ["", f"➡️ RANGING / UNCONFIRMED ({len(flat)})", ", ".join(flat) or "none"]
+    if len(rows) < len(coins):
+        out.append(f"\n({len(coins) - len(rows)} coins skipped — not enough history)")
+    return 0, "\n".join(out)
 
 
 def _usdtd_block() -> str:
@@ -2667,6 +2727,11 @@ if __name__ == "__main__":
     #   --review-daily <COIN>  → daily-timeframe swing review
     #   --review-ratio NUM/DEN → alt/BTC ratio (relative-strength) review
     #   --review-market        → board-wide regime read (breadth + USDT.D + macro)
+    #   --review-trama [1D|4H] → coins in a confirmed trend above / below TRAMA
+    if len(sys.argv) > 1 and sys.argv[1] == "--review-trama":
+        code, out = trama_board_cli(sys.argv[2] if len(sys.argv) > 2 else "")
+        print(out)
+        sys.exit(code)
     if len(sys.argv) > 1 and sys.argv[1] in ("--setups", "--performance"):
         print(format_setup_report())
         sys.exit(0)
