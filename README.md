@@ -223,6 +223,31 @@ ADA, APE, API3, APT, AVAX, ...
 
 Telegram has a 60-second cooldown between runs.
 
+### Macro Bottom Scanner (`macro_bottom.py`)
+
+Scores BTC/ETH/SOL/XRP/BNB from 0–100 on how close each is to a **bear-market cycle bottom**, on the weekly chart. Runs daily at 08:05 via the `macro-bottom` pm2 job, publishes `macro/{COIN}` to Firebase, and answers `/review <coin> macro`.
+
+| Score | Zone | Meaning |
+|---|---|---|
+| 0–39 | wait | Not close; keep your powder dry |
+| 40–59 | watch | Capitulation building; don't buy yet |
+| **60–79** | **accumulate** | The buy zone — start DCA-ing in |
+| 80+ | deep value | Rare; historically the best accumulation |
+
+The 100 points: **200-week MA** 30 (full at 20%+ below it; a "defend" mode scores the flush-and-reclaim pattern), **Fear & Greed** 20 (full at ≤20, zero by 35), **funding** 20 (full at ≤ −20%/yr, zero at positive), **weekly RSI** 15 (10 at ≤40, +5 for bullish divergence), **structure turn** 15 (all-or-nothing).
+
+**Alerts** (private chat only, never daily spam):
+
+| Alert | Fires when |
+|---|---|
+| 📉 zone entry | A coin steps *up* into accumulate or deep value |
+| 🟢 structure turn | Weekly higher low **and** price reclaims the 20-week MA |
+| 🟡 early turn (daily) | Daily higher low **and** price reclaims the 50-day MA, while the weekly turn has *not* confirmed |
+
+The early turn exists because the weekly swing-low test needs three bars either side of a low, so it only confirms about three weeks after the low prints. On daily candles that's about three days. At the last cycle bottom (BTC low 2022-11-21, $15,476) the daily test confirmed on 2023-01-04 at $16,850 while the weekly test waited until 2023-03-27 at $27,125.
+
+It is **an early warning, not a buy signal**: it scores zero points, never moves the zone, and only runs for coins already at score ≥ 50 (`MACRO_EARLY_TURN_SCORE`) whose weekly turn hasn't fired — so it costs one extra request only for a coin near the zone. Each alert fires once, on a false→true flip, deduped in `reports/macro_state.json`.
+
 ---
 
 ## PM2 Process Management

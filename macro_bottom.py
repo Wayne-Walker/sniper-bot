@@ -65,6 +65,13 @@ NOTES = {
     "BNB": "exchange token — historically resilient, scores 'less deep' than L1s",
 }
 ZONE_RANK = {"wait": 0, "watch": 1, "accumulate": 2, "deep_value": 3}
+# Daily early-turn check — the weekly structure test needs 3 bars either side of a
+# swing low, so on weekly candles it confirms a bottom ~3 weeks after the low prints.
+# The same test on DAILY candles confirms in ~3 days. It earns no score (daily noise
+# must never move the cycle read) and only runs for coins already close to the zone,
+# so it costs one extra request per qualifying coin — usually none.
+EARLY_TURN_MIN_SCORE = float(os.getenv("MACRO_EARLY_TURN_SCORE", "50"))
+EARLY_TURN_MA = 50            # daily bars — the MA a daily turn must reclaim
 
 _LEGEND = f"""  ── HOW TO READ ──────────────────────────────────────────────────
   score 0-100 = how close each coin is to a bear-market bottom.
@@ -110,6 +117,32 @@ def spot_weekly(coin: str, limit: int = 1000) -> tuple:
     highs = [float(k[2]) for k in kl]
     lows = [float(k[3]) for k in kl]
     return closes, highs, lows
+
+
+def spot_daily(coin: str, limit: int = 260) -> tuple:
+    """Daily spot closes/lows for the early (daily) structure turn."""
+    r = requests.get(SPOT_URL,
+                     params={"symbol": coin + "USDT", "interval": "1d", "limit": limit},
+                     timeout=20)
+    r.raise_for_status()
+    kl = r.json()
+    return [float(k[4]) for k in kl], [float(k[3]) for k in kl]
+
+
+def early_structure_turn(coin: str) -> bool:
+    """The weekly `_structure_turn` test run on DAILY candles: a higher low after a
+    lower low, plus a close back above the 50-day MA. Never throws — an early read
+    failing must not cost the weekly score its run."""
+    try:
+        closes, lows = spot_daily(coin)
+    except Exception:
+        return False
+    if len(closes) < EARLY_TURN_MA + 10:
+        return False
+    idx = ew.local_minima(lows, span=3)
+    if len(idx) < 2:
+        return False
+    return bool(lows[idx[-1]] > lows[idx[-2]] and closes[-1] > _sma(closes, EARLY_TURN_MA))
 
 
 def fear_greed_avg(n: int = 14) -> float | None:
@@ -235,6 +268,16 @@ def score_coin(coin: str) -> dict | None:
     }
 
 
+def attach_early_turn(res: dict) -> dict:
+    """Set res["early_turn"] — the daily read, gated so it only costs a request for a
+    coin already near the zone and whose weekly turn hasn't confirmed yet. Mutates
+    and returns `res` (one place, so the scanner and the on-demand card agree)."""
+    res["early_turn"] = bool(res["score"] >= EARLY_TURN_MIN_SCORE
+                             and not res["structure_turn"]
+                             and early_structure_turn(res["coin"]))
+    return res
+
+
 # ── State / alerts ──────────────────────────────────────────────────────
 def _load_state() -> dict:
     if not STATE_FILE.exists():
@@ -255,6 +298,7 @@ def format_alert(res: dict, btc: dict | None, kind: str) -> str:
     coin, zone = res["coin"], res["zone"]
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     title = ("🟢 *MACRO STRUCTURE TURN*" if kind == "structure"
+             else "🟡 *MACRO EARLY TURN (daily)*" if kind == "early"
              else f"📉 *MACRO {zone.upper().replace('_', ' ')} ZONE*")
     fng = f"{raw['fear_greed_14d']:.0f}" if raw["fear_greed_14d"] is not None else "n/a"
     fund = f"{raw['funding_ann']:+.0f}%/yr" if raw["funding_ann"] is not None else "n/a"
@@ -280,8 +324,16 @@ def format_alert(res: dict, btc: dict | None, kind: str) -> str:
     if coin in NOTES:
         lines.append(f"_Note: {NOTES[coin]}._")
 
+    if kind != "early" and res.get("early_turn"):
+        lines.append("🟡 Daily early turn: daily higher-low + 50D reclaim "
+                     "(weekly structure not confirmed yet)")
+
     # ── How to read (footer) ──
-    if kind == "structure":
+    if kind == "early":
+        means = ("the DAILY chart turned first — higher-low + 50D reclaim — while the "
+                 "weekly has *not* confirmed. An early warning, ~3 weeks ahead of the "
+                 "weekly test; size accordingly and wait for the weekly turn to add")
+    elif kind == "structure":
         means = "weekly higher-low + 20W reclaim → a bottom is likely forming"
     elif res["zone"] == "deep_value":
         means = "rare deep-value zone → historically the best time to accumulate"
@@ -335,6 +387,7 @@ def main() -> None:
         res = results.get(coin)
         if res is None:
             continue
+        attach_early_turn(res)
         node = dict(res)
         node["btc_zone"] = btc["zone"] if btc else "unknown"
         payload[coin] = node
@@ -344,13 +397,14 @@ def main() -> None:
                + (f" {raw['reclaim_weeks_8w']}/{DEFENSE_WEEKS}wk" if raw["ma200_mode"] == "defend" else ""))
         print(f"  {coin:5}: {res['score']:5.1f}/100  {res['zone']:11}  "
               f"({raw['pct_vs_200w']:+.0f}% vs 200W, wRSI {raw['weekly_rsi']:.0f}{dfn})  "
-              f"[{res['confidence']}]")
+              f"[{res['confidence']}]" + ("  🟡 early daily turn" if res["early_turn"] else ""))
 
         prev = state.get(coin)
         new_rank = ZONE_RANK[res["zone"]]
         # First time we see a coin → seed state silently (no alert burst on deploy).
         if prev is None:
-            state[coin] = {"zone": res["zone"], "structure_turn": res["structure_turn"]}
+            state[coin] = {"zone": res["zone"], "structure_turn": res["structure_turn"],
+                           "early_turn": res["early_turn"]}
             changed = True
             continue
 
@@ -365,8 +419,15 @@ def main() -> None:
             if ew.send_telegram_private(format_alert(res, btc, "structure")):
                 changed = True
                 print("    🟢 structure-turn alert sent.")
+        # Early (daily) turn: flipped false → true, and the weekly hasn't confirmed —
+        # a heads-up that the daily chart turned first, not a zone call.
+        elif res["early_turn"] and not prev.get("early_turn"):
+            if ew.send_telegram_private(format_alert(res, btc, "early")):
+                changed = True
+                print("    🟡 early (daily) turn alert sent.")
 
-        state[coin] = {"zone": res["zone"], "structure_turn": res["structure_turn"]}
+        state[coin] = {"zone": res["zone"], "structure_turn": res["structure_turn"],
+                       "early_turn": res["early_turn"]}
         changed = True
 
     publish(payload)
@@ -392,6 +453,7 @@ def macro_review_cli(coin_raw: str) -> tuple:
                    f"{res['raw']['weekly_rsi']:.0f}) — a bull/parabolic phase, *not* near a cycle "
                    f"bottom. The macro scanner finds *bottoms*, so it doesn't apply here.\n"
                    f"_For a near-term read, use `/review {coin}` (exhaustion / S-R)._")
+    attach_early_turn(res)
     btc = res if coin == "BTC" else (score_coin("BTC") or res)
     msg = format_alert(res, btc, "zone")
     if coin not in COINS:
