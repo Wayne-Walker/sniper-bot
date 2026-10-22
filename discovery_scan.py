@@ -29,7 +29,7 @@ funding, signals). Publishes scan/{COIN} to Firebase and pings the private chat:
   • a MOMENTUM BREAKDOWN (short) → the mirror: a loser breaking down on high, rising
     volume with TRAMA rolling over, NOT yet oversold or crowded-short (short the
     distribution break, not the capitulation). UNPROVEN — journaled under
-    direction="short", alerts respect the digest mute until the log earns trust.
+    direction="short"; pushes like a breakout (ignores the digest mute).
     View with `--breakdown` (Telegram /breakdown).
 
 Every gainer bar is CAP-SCALED (see BREAKOUT_MIN_CHG): a breakout is +3% on a
@@ -123,8 +123,8 @@ BASIS_COOLDOWN_H = float(os.getenv("DISCOVERY_BASIS_COOLDOWN_H", "6"))    # 1 pi
 # capitulation LOW (a bounce/buy), not a short. So a breakdown must NOT already be
 # oversold or crowded-short — short the distribution break, not the crash. Deep
 # flushes (<= DUMP_PCT) stay 'buy' (capitulation bounce). UNPROVEN by design:
-# journaled under direction="short", alerts respect SIGNALS_MUTED until the log
-# earns trust; view on demand with `--breakdown`.
+# journaled under direction="short"; alerts push like breakouts (ignore
+# SIGNALS_MUTED); review the track record with `--breakdown`.
 LOSER_TOP = int(os.getenv("DISCOVERY_LOSER_TOP", "30"))                       # loser lens size
 BREAKDOWN_RSI_FLOOR = float(os.getenv("DISCOVERY_BREAKDOWN_RSI", "35"))       # don't short if already oversold
 BREAKDOWN_FUNDING_FLOOR = float(os.getenv("DISCOVERY_BREAKDOWN_FUNDING", "-30"))  # nor if funding crowded-short
@@ -938,7 +938,7 @@ def format_breakdown_brief() -> str:
                  key=lambda e: e["trigger_ts"], reverse=True)
     if not log:
         return ("No breakdowns logged yet.\n"
-                "(🔻 short tier is UNPROVEN — journaled, not pushed, until the log earns it.)")
+                "(🔻 short tier is UNPROVEN — pushed and journaled; measure before trusting.)")
     tally = {"🟢": 0, "🟡": 0, "🔴": 0, "⏳": 0}
     rows = []
     for e in log:
@@ -1278,8 +1278,9 @@ def main() -> None:
     if earlies and not fresh_early:
         print(f"  (early warnings on cooldown: {', '.join(r['coin'] for r in earlies)})")
 
-    # 🔻 Short breakdowns — journaled under direction="short"; alerts respect the
-    # digest mute (send_signal) until the log proves the tier. View via --breakdown.
+    # 🔻 Short breakdowns — the loser-side mirror of the 🚀 breakout push. Pushes
+    # even while the digests are muted (send_telegram_private, like breakouts), and
+    # is journaled under direction="short" so the tier's hit rate stays measurable.
     bd_alerts = state.get("breakdown_alerts", {})
     breakdowns = [r for r in results if r.get("mom_breakdown")]
     fresh_bd = ([] if not prev else
@@ -1288,10 +1289,10 @@ def main() -> None:
     log_new_breakouts(fresh_bd, source="breakdown", direction="short")
     for r in fresh_bd:
         bd_alerts[r["coin"]] = now_ts
-        if ew.send_signal(format_breakdown(r)):
+        if ew.send_telegram_private(format_breakdown(r)):
             print(f"  🔻 Breakdown push sent: {r['coin']} ({r['chg24']:+.0f}%, RVOL {r['rvol']:g}x).")
         else:
-            print(f"  🔇 Breakdown logged, push muted (unproven tier): {r['coin']}.")
+            print(f"  ⚠️  Breakdown send failed (logged): {r['coin']}.")
     if breakdowns and not fresh_bd:
         print(f"  (breakdowns on cooldown: {', '.join(r['coin'] for r in breakdowns)})")
 
