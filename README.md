@@ -236,13 +236,41 @@ Scores BTC/ETH/SOL/XRP/BNB from 0–100 on how close each is to a **bear-market 
 
 The 100 points: **200-week MA** 30 (full at 20%+ below it; a "defend" mode scores the flush-and-reclaim pattern), **Fear & Greed** 20 (full at ≤20, zero by 35), **funding** 20 (full at ≤ −20%/yr, zero at positive), **weekly RSI** 15 (10 at ≤40, +5 for bullish divergence), **structure turn** 15 (all-or-nothing).
 
+**Cycle phase — which side of the bottom you are on.** The 0–100 score is *unsigned*: every factor in it (below-200W, washed-out RSI, fear, negative funding) measures distress happening **now**, and distress ends at the low. So the score collapses in the week price turns — BTC went 48 → 5 in the single breakout week of 2026-08-17 — and a 0/100 "wait" then reads identically whether the bottom is a year ahead or three months behind.
+
+Every card carries a phase, derived from the same weekly candles at no extra request: the cycle high over the trailing ~3 years, the lowest low since it, how far price has come off that low, and whether the 20-week MA is reclaimed.
+
+| Phase | Meaning |
+|---|---|
+| 📈 markup | At/near the cycle high — no bottom in play; a low score means *the top side* |
+| 📉 markdown | Still falling; the low is not in |
+| 🩸 capitulation | The flush is happening now — the window the score is built for |
+| 🧱 basing | The low is behind us but unconfirmed |
+| 🌱 recovery | The low is behind us and price has turned — a **low score here means the bottom has passed** |
+
+The phase block also reports **peak capitulation**: the highest score reached anywhere in the current drawdown, reconstructed from the candles plus one cached Fear & Greed history request. It answers "was this cycle ever actually washed out?" — BTC 2026 peaked at ≥56 and **never reached the buy zone**, while ETH and SOL both touched 60. It excludes funding (no free weekly history deep enough), so it is always rendered as a floor with `≥`.
+
 **Alerts** (private chat only, never daily spam):
 
 | Alert | Fires when |
 |---|---|
 | 📉 zone entry | A coin steps *up* into accumulate or deep value |
-| 🟢 structure turn | Weekly higher low **and** price reclaims the 20-week MA |
+| 🟢 structure turn | A weekly bottoming structure confirms — **higher low** *or* **V-bottom** — with the 20-week MA reclaimed. Suppressed while the phase is already `recovery`, where the 🌱 alert says the same thing |
 | 🟡 early turn (daily) | Daily higher low **and** price reclaims the 50-day MA, while the weekly turn has *not* confirmed |
+| 🌱 cycle phase | A coin enters **recovery** — the read the score can never give, because its factors have all decayed by the time it is true |
+
+Only the move *into* `recovery` alerts; the other phase transitions are gradual and update state silently. A state row written before this feature has no `phase` key, so the first run after deploy seeds it without firing.
+
+**Two shapes of structure turn.** The original test compared the last two weekly swing lows and required a *higher low*. A low that is never retested can therefore never confirm: the cycle low is itself the most recent swing low and it is lower than the one before it, so the test returns `False` indefinitely — a **permanent** miss, not a late one. BTC 2026 was exactly that: low $57,800 on 2026-06-29, +45% off it with the 20-week MA reclaimed, and the weekly test still read `False`.
+
+`turn_kind()` now reports which shape confirmed:
+
+| Shape | Confirms when |
+|---|---|
+| `higher_low` | The classic — a higher swing low after a lower one, 20W reclaimed |
+| `v_bottom` | The lowest low of the last 26 weeks, at least 4 weeks behind us, price ≥20% off it, 20W reclaimed |
+
+Walked forward week by week, `v_bottom` confirms BTC's 2026 low on **2026-08-17** (the old test: never), and improves the 2022 bottom too — **2023-01-23 at $23,742** against the higher-low test's 2023-03-27 at $28,172, nine weeks and 16% of price earlier, with the higher-low path still confirming afterwards. It does **not** fix real-time bear-rally false positives: the April–May 2026 rally printed a textbook higher low above the 20W MA while the real low was still two months away, and no low-anchored filter separates that from a true turn in real time. That is why the turn is only 15 of 100 points.
 
 The early turn exists because the weekly swing-low test needs three bars either side of a low, so it only confirms about three weeks after the low prints. On daily candles that's about three days. At the last cycle bottom (BTC low 2022-11-21, $15,476) the daily test confirmed on 2023-01-04 at $16,850 while the weekly test waited until 2023-03-27 at $27,125.
 
