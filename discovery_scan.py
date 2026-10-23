@@ -1060,6 +1060,7 @@ def format_dislocation(coin: str, b: dict) -> str:
     now = datetime.now(timezone.utc).strftime("%H:%M UTC")
     tn = min(b["perp_vol"], b["spot_vol"])
     tn_s = f"${tn / 1e6:.0f}M" if tn >= 1e6 else f"${tn / 1e3:.0f}k"
+    side = "🟢 *LONG* bias" if b["kind"] == "discount" else "🔴 *SHORT* bias"
     if b["kind"] == "discount":
         read = ("perp is trading BELOW spot — a liquidation-cascade / stress tell. As it "
                 "re-converges the perp tends to bounce back toward spot (mean-reversion long); "
@@ -1070,6 +1071,7 @@ def format_dislocation(coin: str, b: dict) -> str:
                 "tends to fall back toward spot (mean-reversion short); crowded longs paying up.")
     return "\n".join([
         f"⚖️ *PERP DISLOCATION* — *{coin}*  ({now})",
+        f"{side} · journal entry {b['perp']:g} (perp)",
         f"basis *{b['basis']:+.1f}%*  ·  perp {b['perp']:g}  vs  spot {b['spot']:g}  ·  vol {tn_s}",
         f"_{read}_",
         "_Bitget spot vs perp. Odds, not certainty — check funding + liquidity before acting._",
